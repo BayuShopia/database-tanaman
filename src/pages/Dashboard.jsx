@@ -168,7 +168,61 @@ const isGuest = user?.role === 'guest';
 // Siapa yang boleh menambah/mengedit? (Admin & Surveyor)
 const bolehInput = isAdmin || isSurveyor;
   // 5. RETURN DASHBOARD (UI Utama)
- 
+
+const exportCSV = () => {
+  if (tanamanFilter.length === 0) {
+    alert("Tidak ada data tanaman untuk diexport");
+    return;
+  }
+
+  const header = [
+    "Kode",
+    "Nama Lokal",
+    "Nama Latin",
+    "Lokasi",
+    "Kondisi",
+    "Tanggal Tanam",
+    "Penanam",
+    "Koordinat"
+  ];
+
+  const rows = tanamanFilter.map((t) => [
+    t.kode || "",
+    t.nama || "",
+    t.namaLatin || "",
+    t.lokasi || "",
+    t.kondisi || "",
+    formatTanggal(t.tglTanam),
+    t.penanam || "",
+    t.koordinat || ""
+  ]);
+
+  const csvContent =
+    [header, ...rows]
+      .map((row) =>
+        row.map((cell) =>
+          `"${String(cell).replace(/"/g, '""')}"`
+        ).join(",")
+      )
+      .join("\n");
+
+  const blob = new Blob([csvContent], {
+    type: "text/csv;charset=utf-8;"
+  });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.setAttribute(
+    "download",
+    `daftar_tanaman_${new Date().toISOString().slice(0, 10)}.csv`
+  );
+
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
   return (
    <div className="min-h-screen bg-gray-50 p-4 md:p-8 font-sans">
   
@@ -181,7 +235,7 @@ const bolehInput = isAdmin || isSurveyor;
             <p className="text-gray-500 text-sm">Monitoring Reforestasi Das Bodri</p>
           </div>
           
-          <div className="flex w-full md:w-auto gap-2">
+          <div className="flex flex-col md:flex-row w-full md:w-auto gap-2">
             {/* INPUT SEARCH */}
             <div className="relative flex-1 md:w-64">
               <input 
@@ -193,6 +247,14 @@ const bolehInput = isAdmin || isSurveyor;
               />
               <span className="absolute left-3 top-2.5 text-gray-400">🔍</span>
             </div>
+            {bolehInput && (
+            <button
+  onClick={exportCSV}
+  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-full text-xs font-bold shadow transition"
+>
+  ⬇️ Export CSV
+</button>
+            )}
             {bolehInput && (
             <button 
               onClick={() => setIsModalOpen(true)}
@@ -277,6 +339,9 @@ const bolehInput = isAdmin || isSurveyor;
           </span>
         ) : 'TAMPILKAN LEBIH BANYAK'}
       </button>
+      
+   
+    
     </div>
   )}
 
@@ -543,38 +608,12 @@ const bolehInput = isAdmin || isSurveyor;
       </div>
 
     </div>
-    {/* --- FOOTER SECTION --- */}
+   
 
   </div>
 )}
         </div>
-        <footer className="mt-12 pb-8 text-center">
-  <div className="flex flex-col items-center gap-2">
-    <div className="h-[1px] w-24 bg-gradient-to-r from-transparent via-green-300 to-transparent mb-4"></div>
-    
-    <p className="text-xs font-medium text-gray-400 tracking-widest uppercase">
-      © 2026 Berbumi Database
-    </p>
-    
-    <a 
-      href="https://www.instagram.com/bayuutomo1618" 
-      target="_blank" 
-      rel="noopener noreferrer"
-      className="group flex items-center gap-2 px-4 py-2 rounded-full bg-white border border-gray-100 shadow-sm hover:shadow-md transition-all duration-300 hover:-translate-y-1"
-    >
-      <span className="text-gray-500 text-[11px] font-bold uppercase tracking-tight group-hover:text-green-600 transition-colors">
-        Developed by
-      </span>
-      <span className="text-sm font-black bg-gradient-to-r from-green-600 to-emerald-500 bg-clip-text text-transparent">
-        bayuutomo1618
-      </span>
-    </a>
-    
-    <p className="text-[15px] text-gray-500 italic mt-2">
-      Built with ❤️ for Forum DAS Bodri
-    </p>
-  </div>
-</footer>
+
         </div>
         
   );
