@@ -216,14 +216,14 @@ function KalkulatorKarbonPro() {
                 <div>
                   <h4 className="text-[11px] font-black text-gray-400 uppercase mb-2">Sumber Data Wood Density</h4>
                   <p className="text-xs leading-relaxed text-gray-600 italic">
-                    "Global Wood Density Database" (Zanne et al. 2009). <br/>
+                    Global Wood Density Database (Zanne et al. 2009). <br/>
                     Data mencakup nilai berat jenis kayu kering oven per volume basah (g/cm³).
                   </p>
                 </div>
                 <div>
                   <h4 className="text-[11px] font-black text-gray-400 uppercase mb-2">Konversi Dimensi</h4>
                   <p className="text-xs leading-relaxed text-gray-600">
-                    Diameter ($D$) dihitung dari Keliling ($K$) lapangan menggunakan rumus: <br/>
+                    Diameter (D) dihitung dari Keliling (K) pohon setinggi dada (1.3 meter) menggunakan rumus: <br/>
                     <code className="bg-gray-100 px-2 py-1 rounded font-bold text-blue-700 text-[13px]">D = K / π</code>
                   </p>
                 </div>
@@ -233,15 +233,15 @@ function KalkulatorKarbonPro() {
                 <div>
                   <h4 className="text-[11px] font-black text-gray-400 uppercase mb-2">Rumus Allometric (Chave, 2005)</h4>
                   <p className="text-xs leading-relaxed text-gray-600">
-                    Estimasi biomassa atas permukaan ($AGB$) dihitung tanpa data tinggi pohon: <br/>
+                    Estimasi biomassa atas permukaan (AGB) dihitung tanpa data tinggi pohon: <br/>
                     <code className="bg-green-50 px-2 py-1 rounded font-bold text-green-700 text-[13px]">AGB = 0,11 × ρ × D^2,62</code>
                   </p>
                 </div>
                 <div>
                   <h4 className="text-[11px] font-black text-gray-400 uppercase mb-2">Faktor Serapan CO₂</h4>
                   <p className="text-xs leading-relaxed text-gray-600">
-                    1. Massa Karbon ($C$) = $AGB \times 0,47$ <br/>
-                    2. Serapan $CO_2$ = $C \times 3,67$ (Rasio $44/12$)
+                    1. Massa Karbon (C) = AGB x 0,47 <br/>
+                    2. Serapan CO2 = C x 3,67 (Rasio 44/12)
                   </p>
                 </div>
               </div>
