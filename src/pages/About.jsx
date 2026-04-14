@@ -11,9 +11,7 @@ function About() {
         jangka panjang.
       </p>
 
-      <p className="mt-6 text-sm text-gray-400">
-        Dibangun oleh Bayu Utomo • 2026
-      </p>
+     
     </div>
   );
 }
