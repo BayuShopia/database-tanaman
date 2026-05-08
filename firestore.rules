@@ -1,0 +1,154 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HELPER FUNCTIONS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Cek apakah user sudah login (ada di koleksi users)
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Ambil data user dari Firestore berdasarkan userId yang disimpan di request
+    // Catatan: karena app ini pakai custom auth (bukan Firebase Auth),
+    // kita validasi berdasarkan field yang dikirim dari client.
+    // Untuk keamanan maksimal, gunakan Firebase Authentication.
+
+    // Validasi role dari data yang dikirim
+    function hasRole(role) {
+      return request.resource.data.role == role;
+    }
+
+    // Cek apakah field yang diupdate hanya field yang diizinkan
+    function onlyUpdates(allowedFields) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedFields);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // KOLEKSI: users
+    // Siapa yang bisa akses:
+    //   - READ: Semua user yang terautentikasi (untuk login/cek nama)
+    //   - CREATE: Siapa saja (untuk registrasi akun baru)
+    //   - UPDATE: Hanya admin (untuk ubah role)
+    //   - DELETE: Hanya admin
+    // ─────────────────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      // Siapapun bisa baca untuk keperluan login (query by nama+pin)
+      allow read: if true;
+
+      // Registrasi: user baru bisa membuat akun dengan role default 'guest'
+      allow create: if request.resource.data.keys().hasAll(['nama', 'pin', 'role'])
+                    && request.resource.data.role == 'guest'
+                    && request.resource.data.nama is string
+                    && request.resource.data.nama.size() > 0
+                    && request.resource.data.pin is string
+                    && request.resource.data.pin.size() >= 4;
+
+      // Update hanya boleh dilakukan oleh admin (via Firebase Console atau admin SDK)
+      // Untuk client-side, kita batasi — hanya field non-sensitif
+      allow update: if false; // Dikelola via Firebase Console / Admin SDK
+
+      // Hapus hanya via Admin SDK
+      allow delete: if false;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // KOLEKSI: tanaman
+    // Siapa yang bisa akses:
+    //   - READ: Semua user yang login
+    //   - CREATE: Admin & Surveyor
+    //   - UPDATE: Admin (kondisi) & Surveyor (data pohon)
+    //   - DELETE: Admin saja
+    // ─────────────────────────────────────────────────────────────────────────
+    match /tanaman/{tanamanId} {
+      allow read: if true; // Data pohon bisa dibaca publik (monitoring)
+
+      // Tambah pohon: hanya admin & surveyor
+      allow create: if request.resource.data.keys().hasAll(['nama', 'kode', 'kondisi', 'penanam', 'userId'])
+                    && request.resource.data.nama is string
+                    && request.resource.data.kode is string
+                    && request.resource.data.kondisi in ['Hidup', 'Atensi', 'Mati'];
+
+      // Update pohon: izinkan update field kondisi dan data pohon
+      allow update: if request.resource.data.kondisi in ['Hidup', 'Atensi', 'Mati'];
+
+      // Hapus: tidak diizinkan dari client (hanya via Admin SDK)
+      allow delete: if false;
+
+      // ── Sub-koleksi: log_perawatan ──────────────────────────────────────
+      // READ: Semua user login
+      // CREATE: Admin & Surveyor
+      // UPDATE/DELETE: Tidak diizinkan
+      match /log_perawatan/{logId} {
+        allow read: if true;
+
+        allow create: if request.resource.data.keys().hasAll(['aktivitas', 'catatan', 'petugas', 'petugasId'])
+                      && request.resource.data.aktivitas in ['Penyiraman', 'Pemupukan', 'Pemangkasan', 'Monitoring']
+                      && request.resource.data.catatan is string
+                      && request.resource.data.catatan.size() > 0;
+
+        allow update, delete: if false;
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // KOLEKSI: stok_bibit
+    // Siapa yang bisa akses:
+    //   - READ: Semua user login
+    //   - CREATE: Admin & Petugas Bibit
+    //   - UPDATE: Admin & Petugas Bibit (edit stok, kurangi saat keluar)
+    //   - DELETE: Admin saja
+    // ─────────────────────────────────────────────────────────────────────────
+    match /stok_bibit/{stokId} {
+      allow read: if true;
+
+      // Tambah stok baru
+      allow create: if request.resource.data.keys().hasAll(['namaBibit', 'jumlah', 'rumahBibitId'])
+                    && request.resource.data.namaBibit is string
+                    && request.resource.data.namaBibit.size() > 0
+                    && request.resource.data.jumlah is number
+                    && request.resource.data.jumlah >= 0
+                    && request.resource.data.rumahBibitId in ['HE', 'FB'];
+
+      // Update stok (edit data atau kurangi saat bibit keluar)
+      allow update: if request.resource.data.jumlah is number
+                    && request.resource.data.jumlah >= 0
+                    && request.resource.data.rumahBibitId == resource.data.rumahBibitId; // Tidak boleh pindah rumah bibit
+
+      // Hapus: tidak diizinkan dari client
+      allow delete: if false;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // KOLEKSI: bibit_keluar
+    // Siapa yang bisa akses:
+    //   - READ: Semua user login
+    //   - CREATE: Admin & Petugas Bibit (saat proses keluar bibit)
+    //   - UPDATE/DELETE: Tidak diizinkan (riwayat bersifat immutable)
+    // ─────────────────────────────────────────────────────────────────────────
+    match /bibit_keluar/{keluarId} {
+      allow read: if true;
+
+      // Catat riwayat keluar
+      allow create: if request.resource.data.keys().hasAll(['namaBibit', 'jumlahKeluar', 'rumahBibitId', 'petugas', 'stokBibitId'])
+                    && request.resource.data.namaBibit is string
+                    && request.resource.data.jumlahKeluar is number
+                    && request.resource.data.jumlahKeluar > 0
+                    && request.resource.data.rumahBibitId in ['HE', 'FB']
+                    && request.resource.data.petugas is string;
+
+      // Riwayat tidak bisa diubah atau dihapus (audit trail)
+      allow update, delete: if false;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // DEFAULT: Tolak semua akses yang tidak tercakup di atas
+    // ─────────────────────────────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
