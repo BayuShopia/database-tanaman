@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from "../context/AuthContext";
 import { usePagination } from '../context/usePagination';
+import { useOfflineQueue } from '../context/useOfflineQueue';
 import { db } from '../firebaseConfig';
 import { collection, getDocs, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
 
@@ -22,6 +23,7 @@ const StatusBadge = ({ kondisi }) => {
 function Dashboard() {
   const { user } = useAuth();
   const { data: daftarTanaman, loading, hasMore, fetchData, setData } = usePagination("tanaman", 10, "tglTanam");
+  const { queue, isOnline, isSyncing, enqueue, flushQueue } = useOfflineQueue();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTanaman, setSelectedTanaman] = useState(null);
@@ -31,6 +33,12 @@ function Dashboard() {
   const [form, setForm] = useState({
     acara: '', kode: '', kondisi: 'Hidup', lokasi: '', nama: '', namaLatin: '', sumber: '', koordinat: ''
   });
+  const [toast, setToast] = useState(null); // { msg, type }
+
+  const showToast = (msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 4000);
+  };
 
   useEffect(() => { if (user) fetchData(false); }, [user]);
   useEffect(() => {
@@ -51,42 +59,77 @@ function Dashboard() {
       await updateDoc(doc(db, "tanaman", id), { kondisi: kondisiBaru });
       setData(prev => prev.map(t => t.id === id ? { ...t, kondisi: kondisiBaru } : t));
       setSelectedTanaman(prev => ({ ...prev, kondisi: kondisiBaru }));
-      alert(`Status berhasil diubah menjadi ${kondisiBaru}`);
-    } catch (err) { alert("Gagal update status: " + err.message); }
+      showToast(`✅ Status diubah menjadi ${kondisiBaru}`, 'success');
+    } catch (err) { showToast('Gagal update status: ' + err.message, 'error'); }
   };
 
   const simpanTanaman = async (e) => {
     e.preventDefault();
-    try {
-      const docRef = await addDoc(collection(db, "tanaman"), {
-        ...form, tglTanam: serverTimestamp(), penanam: user.nama, userId: user.id
+    const payload = {
+      ...form,
+      penanam: user.nama,
+      userId: user.id,
+    };
+
+    if (isOnline) {
+      // ── ONLINE: langsung simpan ke Firestore ──────────────────────────────
+      try {
+        const docRef = await addDoc(collection(db, "tanaman"), {
+          ...payload,
+          tglTanam: serverTimestamp(),
+        });
+        const dataBaru = {
+          id: docRef.id,
+          ...payload,
+          tglTanam: { toDate: () => new Date() },
+        };
+        setData(prev => [dataBaru, ...prev]);
+        setForm({ acara: '', kode: '', kondisi: 'Hidup', lokasi: '', nama: '', namaLatin: '', sumber: '', koordinat: '' });
+        setIsModalOpen(false);
+        // Toast sukses
+        showToast('✅ Data berhasil disimpan!', 'success');
+      } catch (err) {
+        showToast('❌ Gagal menyimpan: ' + err.message, 'error');
+      }
+    } else {
+      // ── OFFLINE: simpan ke antrian localStorage ───────────────────────────
+      const localId = enqueue("tanaman", {
+        ...payload,
+        tglTanam: new Date().toISOString(), // placeholder, akan diganti serverTimestamp saat sync
       });
-      alert("Berhasil disimpan!");
-      const dataBaru = { id: docRef.id, ...form, tglTanam: { toDate: () => new Date() }, penanam: user.nama };
+
+      // Optimistic update — tampilkan di list dengan marker "pending"
+      const dataBaru = {
+        id: localId,
+        ...payload,
+        tglTanam: { toDate: () => new Date() },
+        _pending: true, // marker untuk UI
+      };
       setData(prev => [dataBaru, ...prev]);
       setForm({ acara: '', kode: '', kondisi: 'Hidup', lokasi: '', nama: '', namaLatin: '', sumber: '', koordinat: '' });
       setIsModalOpen(false);
-    } catch (err) { alert(err.message); }
+      showToast('📶 Offline — data disimpan lokal, akan sync saat online', 'offline');
+    }
   };
 
   const simpanLog = async (e) => {
     e.preventDefault();
-    if (!logForm.catatan) return alert("Isi catatan dulu!");
+    if (!logForm.catatan) return showToast('Isi catatan dulu!', 'error');
     try {
       await addDoc(collection(db, "tanaman", selectedTanaman.id, "log_perawatan"), {
         ...logForm, tanggal: serverTimestamp(), petugas: user.nama, petugasId: user.id
       });
       setLogForm({ aktivitas: 'Penyiraman', catatan: '' });
       ambilLogPerawatan(selectedTanaman.id);
-      alert("Catatan tersimpan!");
-    } catch (err) { alert("Error: " + err.message); }
+      showToast('✅ Catatan tersimpan!', 'success');
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
   };
 
   const ambilGPS = () => {
-    if (!navigator.geolocation) return alert("Browser tidak mendukung GPS");
+    if (!navigator.geolocation) return showToast('Browser tidak mendukung GPS', 'error');
     navigator.geolocation.getCurrentPosition(
-      (pos) => { setForm({ ...form, koordinat: `${pos.coords.latitude}, ${pos.coords.longitude}` }); alert("Lokasi dikunci!"); },
-      (err) => alert("Gagal: " + err.message),
+      (pos) => { setForm({ ...form, koordinat: `${pos.coords.latitude}, ${pos.coords.longitude}` }); showToast('📍 Lokasi dikunci!', 'success'); },
+      (err) => showToast('Gagal ambil GPS: ' + err.message, 'error'),
       { enableHighAccuracy: true }
     );
   };
@@ -134,13 +177,56 @@ function Dashboard() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-green-50/30 p-4 md:p-8">
       <div className="max-w-5xl mx-auto">
 
+        {/* ── TOAST NOTIFICATION ─────────────────────────────────────────── */}
+        {toast && (
+          <div className={`fixed top-4 right-4 z-[100] flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-xl text-sm font-bold animate-slide-up max-w-sm ${
+            toast.type === 'success' ? 'bg-emerald-600 text-white' :
+            toast.type === 'offline' ? 'bg-amber-500 text-white' :
+            'bg-red-500 text-white'
+          }`}>
+            <span>{toast.msg}</span>
+            <button onClick={() => setToast(null)} className="ml-auto opacity-70 hover:opacity-100">✕</button>
+          </div>
+        )}
+
+        {/* ── STATUS BAR: Online/Offline + Pending Queue ─────────────────── */}
+        {(!isOnline || queue.length > 0) && (
+          <div className={`mb-4 flex items-center justify-between gap-3 px-4 py-3 rounded-2xl text-sm font-bold ${
+            !isOnline
+              ? 'bg-amber-50 border border-amber-200 text-amber-800'
+              : 'bg-blue-50 border border-blue-200 text-blue-800'
+          }`}>
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${!isOnline ? 'bg-amber-500' : 'bg-blue-500 animate-pulse'}`} />
+              {!isOnline
+                ? '📶 Kamu sedang offline — data baru akan disimpan lokal'
+                : `🔄 Menyinkronkan ${queue.length} data ke server...`}
+            </div>
+            {isOnline && queue.length > 0 && (
+              <button
+                onClick={flushQueue}
+                disabled={isSyncing}
+                className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-xl hover:bg-blue-700 transition-all disabled:opacity-50"
+              >
+                {isSyncing ? 'Syncing...' : `Sync Sekarang (${queue.length})`}
+              </button>
+            )}
+          </div>
+        )}
+
         {/* HEADER */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
           <div>
             <h1 className="text-3xl font-black text-gray-900 tracking-tight">
               🌿 <span className="bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">Berbumi</span> Database
             </h1>
-            <p className="text-gray-500 text-sm font-medium mt-1">Monitoring Reforestasi DAS Bodri</p>
+            <div className="flex items-center gap-2 mt-1">
+              <p className="text-gray-500 text-sm font-medium">Monitoring Reforestasi DAS Bodri</p>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${isOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
+                {isOnline ? 'Online' : 'Offline'}
+              </span>
+            </div>
           </div>
           <div className="flex flex-col sm:flex-row w-full md:w-auto gap-2">
             <div className="relative flex-1 md:w-72">
@@ -179,9 +265,17 @@ function Dashboard() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {tanamanFilter.length > 0 ? tanamanFilter.map((t) => (
-                  <tr key={t.id} className="hover:bg-green-50/50 transition-colors cursor-pointer group" onClick={() => setSelectedTanaman(t)}>
+                  <tr key={t.id} className={`hover:bg-green-50/50 transition-colors cursor-pointer group ${t._pending ? 'opacity-70' : ''}`} onClick={() => !t._pending && setSelectedTanaman(t)}>
                     <td className="px-5 py-4">
-                      <div className="font-bold text-gray-900 group-hover:text-green-700 transition-colors">{t.nama}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-gray-900 group-hover:text-green-700 transition-colors">{t.nama}</span>
+                        {t._pending && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                            Pending
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-gray-400 italic mt-0.5">{t.namaLatin || '-'}</div>
                       <div className="text-[11px] text-green-600 mt-1 font-mono font-bold">{t.kode}</div>
                     </td>
@@ -230,7 +324,12 @@ function Dashboard() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-md p-4">
             <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh] animate-slide-up">
               <div className="p-5 border-b flex justify-between items-center bg-gradient-to-r from-green-600 to-emerald-600 shrink-0">
-                <h2 className="text-lg font-black text-white">🌱 Input Data Pohon Baru</h2>
+                <div>
+                  <h2 className="text-lg font-black text-white">🌱 Input Data Pohon Baru</h2>
+                  {!isOnline && (
+                    <p className="text-amber-200 text-xs font-medium mt-0.5">📶 Mode offline — data akan disimpan lokal</p>
+                  )}
+                </div>
                 <button onClick={() => setIsModalOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-xl bg-white/20 hover:bg-white/30 text-white transition">✕</button>
               </div>
               <form onSubmit={simpanTanaman} className="flex flex-col overflow-hidden">
@@ -279,7 +378,13 @@ function Dashboard() {
                 </div>
                 <div className="p-5 bg-gray-50 border-t flex gap-3 shrink-0">
                   <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-2xl transition-all text-sm">Batal</button>
-                  <button type="submit" className="flex-[2] bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white font-bold py-3 rounded-2xl shadow-lg shadow-green-500/20 transition-all active:scale-95 text-sm">Simpan Data</button>
+                  <button type="submit" className={`flex-[2] text-white font-bold py-3 rounded-2xl shadow-lg transition-all active:scale-95 text-sm ${
+                    isOnline
+                      ? 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 shadow-green-500/20'
+                      : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 shadow-amber-500/20'
+                  }`}>
+                    {isOnline ? 'Simpan Data' : '📶 Simpan Offline'}
+                  </button>
                 </div>
               </form>
             </div>
